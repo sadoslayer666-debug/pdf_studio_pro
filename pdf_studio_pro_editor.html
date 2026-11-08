@@ -1,0 +1,1246 @@
+<!DOCTYPE html>
+<html lang="th" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF STUDIO - Professional PDF Editor</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            500: '#0ea5e9',
+                            600: '#0284c7',
+                            700: '#0369a1',
+                            800: '#075985',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- PDF.js library for rendering & extracting text -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <!-- pdf-lib for PDF manipulation & creation -->
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <!-- fontkit for custom font embedding in pdf-lib -->
+    <script src="https://unpkg.com/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js"></script>
+    <!-- JSZip for batch export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- Tesseract.js for OCR support -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+    <style>
+        /* Custom scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        
+        /* Document Canvas drop zone glow */
+        .drag-over {
+            border-color: #0284c7 !important;
+            background-color: #f0f9ff !important;
+        }
+
+        .pdf-page-wrapper {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        /* Annotation canvas positioning layer */
+        .overlay-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: auto;
+        }
+
+        /* Active overlay item highlight with Hardware Acceleration */
+        .overlay-element {
+            position: absolute;
+            top: 0;
+            left: 0;
+            cursor: move;
+            user-select: none;
+            touch-action: none;
+            border: 1px stroke transparent;
+            will-change: transform;
+        }
+        .overlay-element.selected {
+            border: 1px dashed #0284c7;
+            background-color: rgba(14, 165, 233, 0.08);
+            border-radius: 4px;
+        }
+        .overlay-element .resize-handle {
+            width: 10px;
+            height: 10px;
+            background: #0284c7;
+            border: 1px solid white;
+            position: absolute;
+            right: -5px;
+            bottom: -5px;
+            cursor: se-resize;
+            display: none;
+        }
+        .overlay-element.selected .resize-handle {
+            display: block;
+        }
+
+        /* Inline Text Box Editor */
+        .text-editor-container {
+            position: absolute;
+            z-index: 30;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .text-editor-box {
+            background: rgba(255, 255, 255, 0.95);
+            border: 2px solid #0284c7;
+            outline: none;
+            resize: both;
+            overflow: auto;
+            line-height: 1.3;
+            padding: 6px;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            min-width: 160px;
+            min-height: 40px;
+            color: #000;
+        }
+        .text-editor-actions {
+            display: flex;
+            gap: 4px;
+            justify-content: flex-end;
+        }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 h-full flex flex-col font-sans overflow-hidden">
+
+    <!-- TOP HEADER / TOOLBAR -->
+    <header class="bg-white border-b border-slate-200 h-14 px-4 flex items-center justify-between z-20 shrink-0">
+        <div class="flex items-center space-x-3">
+            <div class="flex items-center space-x-2 text-brand-600 font-bold text-xl tracking-tight">
+                <i data-lucide="file-text" class="w-6 h-6 stroke-[2.5]"></i>
+                <span>PDF STUDIO <span class="text-xs bg-brand-100 text-brand-700 font-semibold px-2 py-0.5 rounded-full border border-brand-500/20">PRO</span></span>
+            </div>
+            <div class="h-5 w-px bg-slate-200 mx-2"></div>
+            <!-- File Info -->
+            <div id="file-info" class="text-xs text-slate-500 max-w-xs truncate font-medium">
+                ไม่ได้เลือกไฟล์เอกสาร
+            </div>
+        </div>
+
+        <!-- Center Controls: Action Tool Selectors -->
+        <div class="hidden md:flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 space-x-1" id="main-tools">
+            <button onclick="setActiveTool('select')" id="tool-select" class="tool-btn flex items-center space-x-1 px-3 py-1.5 rounded-md text-xs font-medium text-slate-700 hover:bg-white bg-white shadow-sm transition">
+                <i data-lucide="mouse-pointer" class="w-4 h-4"></i>
+                <span>เลือก/ย้าย</span>
+            </button>
+            <button onclick="setActiveTool('text')" id="tool-text" class="tool-btn flex items-center space-x-1 px-3 py-1.5 rounded-md text-xs font-medium text-slate-600 hover:bg-white transition">
+                <i data-lucide="type" class="w-4 h-4"></i>
+                <span>ข้อความใหม่</span>
+            </button>
+            <button onclick="setActiveTool('overlay-replace')" id="tool-overlay-replace" class="tool-btn flex items-center space-x-1 px-3 py-1.5 rounded-md text-xs font-medium text-slate-600 hover:bg-white transition">
+                <i data-lucide="eraser" class="w-4 h-4"></i>
+                <span>แก้/ปิดข้อความเดิม</span>
+            </button>
+            <button onclick="setActiveTool('image')" id="tool-image" class="tool-btn flex items-center space-x-1 px-3 py-1.5 rounded-md text-xs font-medium text-slate-600 hover:bg-white transition">
+                <i data-lucide="image" class="w-4 h-4"></i>
+                <span>ใส่รูปภาพ/โลโก้</span>
+            </button>
+            <button onclick="setActiveTool('draw')" id="tool-draw" class="tool-btn flex items-center space-x-1 px-3 py-1.5 rounded-md text-xs font-medium text-slate-600 hover:bg-white transition">
+                <i data-lucide="pen-tool" class="w-4 h-4"></i>
+                <span>วาด / ปากกา</span>
+            </button>
+            <button onclick="setActiveTool('signature')" id="tool-signature" class="tool-btn flex items-center space-x-1 px-3 py-1.5 rounded-md text-xs font-medium text-slate-600 hover:bg-white transition">
+                <i data-lucide="signature" class="w-4 h-4"></i>
+                <span>ลายเซ็น</span>
+            </button>
+            <button onclick="setActiveTool('ocr')" id="tool-ocr" class="tool-btn flex items-center space-x-1 px-3 py-1.5 rounded-md text-xs font-medium text-slate-600 hover:bg-white transition">
+                <i data-lucide="scan-text" class="w-4 h-4"></i>
+                <span>OCR อ่านข้อความ</span>
+            </button>
+        </div>
+
+        <!-- Right Side Actions -->
+        <div class="flex items-center space-x-2">
+            <label class="cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 border border-slate-300 transition">
+                <i data-lucide="upload" class="w-4 h-4"></i>
+                <span class="hidden sm:inline">เปิด PDF</span>
+                <input type="file" id="pdf-input" accept="application/pdf" class="hidden" onchange="loadPDFFromFile(event)">
+            </label>
+
+            <button onclick="openExportModal()" class="bg-brand-600 hover:bg-brand-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm transition">
+                <i data-lucide="download" class="w-4 h-4"></i>
+                <span>ส่งออก (Export)</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- SECONDARY TOOLBAR / CONTEXT OPTIONS -->
+    <div id="secondary-toolbar" class="bg-slate-50 border-b border-slate-200 px-4 py-1.5 flex items-center justify-between text-xs text-slate-600 overflow-x-auto shrink-0">
+        <!-- Text Options Subbar -->
+        <div id="subbar-text" class="flex items-center space-x-3 w-full">
+            <span class="font-semibold text-slate-500 uppercase tracking-wider text-[10px]">ตั้งค่าตัวอักษร:</span>
+            <select id="text-font" class="bg-white border border-slate-300 rounded px-2 py-1 focus:outline-none focus:border-brand-500">
+                <option value="THSarabun">TH Sarabun / Standard Thai</option>
+                <option value="Helvetica">Helvetica / Arial (ENG)</option>
+                <option value="Times-Roman">Times New Roman</option>
+                <option value="Courier">Courier / Monospace</option>
+            </select>
+            
+            <div class="flex items-center space-x-1">
+                <span class="text-slate-400">ขนาด:</span>
+                <input type="number" id="text-size" value="16" min="8" max="120" class="w-14 bg-white border border-slate-300 rounded px-1.5 py-1 text-center">
+            </div>
+
+            <div class="flex items-center space-x-1 border-l border-slate-200 pl-3">
+                <span class="text-slate-400">สี:</span>
+                <input type="color" id="text-color" value="#000000" class="w-6 h-6 border-none cursor-pointer rounded bg-transparent">
+            </div>
+
+            <div class="flex items-center space-x-1 border-l border-slate-200 pl-3">
+                <button onclick="toggleTextStyle('bold')" id="btn-bold" class="p-1 hover:bg-slate-200 rounded font-bold border border-slate-300 bg-white">B</button>
+                <button onclick="toggleTextStyle('italic')" id="btn-italic" class="p-1 hover:bg-slate-200 rounded italic border border-slate-300 bg-white">I</button>
+            </div>
+
+            <div class="text-slate-400 border-l border-slate-200 pl-3 hidden lg:block">
+                คลิกบนหน้าเอกสารเพื่อวางข้อความใหม่
+            </div>
+        </div>
+
+        <!-- Draw / Pen Subbar -->
+        <div id="subbar-draw" class="hidden flex items-center space-x-3 w-full">
+            <span class="font-semibold text-slate-500 uppercase tracking-wider text-[10px]">ตั้งค่าปากกา:</span>
+            <div class="flex items-center space-x-1">
+                <span class="text-slate-400">สีเส้น:</span>
+                <input type="color" id="draw-color" value="#ef4444" class="w-6 h-6 border-none cursor-pointer rounded bg-transparent">
+            </div>
+            <div class="flex items-center space-x-1">
+                <span class="text-slate-400">ขนาดเส้น:</span>
+                <input type="range" id="draw-width" min="1" max="20" value="3" class="w-24">
+                <span id="draw-width-val" class="font-mono">3px</span>
+            </div>
+            <button onclick="clearCurrentPageDrawings()" class="text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 px-2 py-1 rounded border border-red-200">
+                ล้างเส้นวาดหน้านี้
+            </button>
+        </div>
+    </div>
+
+    <!-- MAIN CONTENT AREA -->
+    <div class="flex flex-1 overflow-hidden relative">
+
+        <!-- LEFT SIDEBAR: Page Thumbnails & Management -->
+        <aside id="sidebar" class="w-64 bg-white border-r border-slate-200 flex flex-col transition-all duration-300 shrink-0 z-10">
+            <div class="p-3 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+                <span class="font-bold text-xs text-slate-700 flex items-center space-x-1">
+                    <i data-lucide="layers" class="w-4 h-4"></i>
+                    <span>จัดการหน้าเอกสาร (<span id="page-count-display">0</span>)</span>
+                </span>
+                <div class="flex items-center space-x-1">
+                    <button onclick="openMergeModal()" title="รวมไฟล์ PDF" class="p-1 text-slate-600 hover:bg-slate-200 rounded">
+                        <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                    </button>
+                    <button onclick="toggleSidebar()" class="p-1 text-slate-500 hover:bg-slate-200 rounded">
+                        <i data-lucide="panel-left-close" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Thumbnail List -->
+            <div id="thumbnail-container" class="flex-1 overflow-y-auto p-3 space-y-3">
+                <div class="text-center py-10 text-slate-400 text-xs">
+                    กรุณาเปิดไฟล์ PDF<br>เพื่อเริ่มต้นแก้ไข
+                </div>
+            </div>
+
+            <!-- Page Quick Actions Toolbar -->
+            <div class="p-2 border-t border-slate-200 bg-slate-50 grid grid-cols-4 gap-1 text-center">
+                <button onclick="rotateCurrentPage(90)" title="หมุนขวา 90°" class="p-2 bg-white hover:bg-slate-100 border border-slate-200 rounded text-slate-700 text-xs flex justify-center">
+                    <i data-lucide="rotate-cw" class="w-4 h-4"></i>
+                </button>
+                <button onclick="duplicateCurrentPage()" title="คัดลอกหน้านี้" class="p-2 bg-white hover:bg-slate-100 border border-slate-200 rounded text-slate-700 text-xs flex justify-center">
+                    <i data-lucide="copy" class="w-4 h-4"></i>
+                </button>
+                <button onclick="deleteCurrentPage()" title="ลบหน้านี้" class="p-2 bg-white hover:bg-slate-100 border border-slate-200 rounded text-red-600 border-red-200 flex justify-center">
+                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                </button>
+                <button onclick="insertBlankPage()" title="แทรกหน้าว่าง" class="p-2 bg-white hover:bg-slate-100 border border-slate-200 rounded text-slate-700 text-xs flex justify-center">
+                    <i data-lucide="file-plus" class="w-4 h-4"></i>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Toggle Sidebar Floating Button when collapsed -->
+        <button id="sidebar-open-btn" onclick="toggleSidebar()" class="hidden absolute left-2 top-2 z-20 bg-white border border-slate-300 p-1.5 rounded-md shadow-md text-slate-700 hover:bg-slate-50">
+            <i data-lucide="panel-left-open" class="w-4 h-4"></i>
+        </button>
+
+        <!-- CENTER VIEWPORT: PDF View & Editor Canvas -->
+        <main id="viewport" class="flex-1 overflow-auto bg-slate-200 p-6 flex flex-col items-center justify-start relative">
+            
+            <!-- Empty State / File Drop Zone -->
+            <div id="drop-zone" class="m-auto border-2 border-dashed border-slate-300 hover:border-brand-500 rounded-2xl p-12 text-center bg-white shadow-sm max-w-lg cursor-pointer transition" onclick="document.getElementById('pdf-input').click()">
+                <div class="w-16 h-16 bg-brand-50 text-brand-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i data-lucide="file-up" class="w-8 h-8"></i>
+                </div>
+                <h3 class="text-lg font-bold text-slate-800 mb-1">ลากไฟล์ PDF มาวางที่นี่</h3>
+                <p class="text-sm text-slate-500 mb-4">หรือคลิกเพื่อเลือกไฟล์จากเครื่องคอมพิวเตอร์ / มือถือ</p>
+                <span class="inline-block bg-brand-600 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow hover:bg-brand-700 transition">
+                    เลือกไฟล์ PDF
+                </span>
+                <p class="text-[11px] text-slate-400 mt-4">🔒 ความปลอดภัยสูงสุด: ไฟล์จะถูกประมวลผลภายในเครื่องของคุณเท่านั้น ไม่มีการอัปโหลดสู่ Server</p>
+            </div>
+
+            <!-- PDF Page Renderer Container -->
+            <div id="pdf-pages-container" class="space-y-6 hidden my-auto">
+                <!-- Pages render here dynamically -->
+            </div>
+
+        </main>
+    </div>
+
+    <!-- BOTTOM ZOOM & NAVIGATION BAR -->
+    <footer class="bg-white border-t border-slate-200 px-4 py-2 flex items-center justify-between text-xs text-slate-600 shrink-0 z-20">
+        <div class="flex items-center space-x-2">
+            <span>มุมมอง:</span>
+            <button onclick="changeZoom(-0.15)" class="p-1 hover:bg-slate-100 border border-slate-300 rounded"><i data-lucide="zoom-out" class="w-3.5 h-3.5"></i></button>
+            <span id="zoom-level-text" class="font-mono w-12 text-center">100%</span>
+            <button onclick="changeZoom(0.15)" class="p-1 hover:bg-slate-100 border border-slate-300 rounded"><i data-lucide="zoom-in" class="w-3.5 h-3.5"></i></button>
+            <button onclick="resetZoom()" class="px-2 py-1 hover:bg-slate-100 border border-slate-300 rounded text-[11px]">พอดีหน้า</button>
+        </div>
+
+        <div class="flex items-center space-x-2">
+            <span>หน้า <span id="current-page-num">0</span> จาก <span id="total-page-num">0</span></span>
+        </div>
+
+        <div class="flex items-center space-x-2 text-[11px] text-slate-400">
+            <i data-lucide="shield-check" class="w-3.5 h-3.5 text-green-600"></i>
+            <span>Local Processing Ready</span>
+        </div>
+    </footer>
+
+    <!-- MODAL: EXPORT OPTIONS -->
+    <div id="export-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6 border border-slate-200">
+            <div class="flex justify-between items-center pb-3 border-b border-slate-200">
+                <h3 class="text-base font-bold text-slate-800 flex items-center space-x-2">
+                    <i data-lucide="download" class="w-5 h-5 text-brand-600"></i>
+                    <span>ส่งออกเอกสาร (Export PDF / Images)</span>
+                </h3>
+                <button onclick="closeExportModal()" class="text-slate-400 hover:text-slate-600">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div class="py-4 space-y-4">
+                <!-- Export Format -->
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">รูปแบบไฟล์ที่ต้องการ (Format):</label>
+                    <select id="export-format" onchange="toggleExportFormatOptions()" class="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                        <option value="pdf">PDF Document (.pdf)</option>
+                        <option value="png">PNG High Quality Image (.png / .zip)</option>
+                        <option value="jpg">JPEG Standard Image (.jpg / .zip)</option>
+                        <option value="webp">WebP Lightweight Image (.webp / .zip)</option>
+                    </select>
+                </div>
+
+                <!-- Page Scope -->
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">ขอบเขตหน้าที่ต้องการ Export:</label>
+                    <select id="export-range-type" onchange="toggleRangeInput()" class="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                        <option value="all">ทุกหน้า (All Pages)</option>
+                        <option value="current">เฉพาะหน้าที่ดูอยู่ปัจจุบัน</option>
+                        <option value="custom">กำหนดช่วงหน้า (เช่น 1-3, 5)</option>
+                    </select>
+                    <input type="text" id="export-range-custom" placeholder="ตัวอย่าง: 1-3, 5" class="w-full mt-2 bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs hidden">
+                </div>
+
+                <!-- Resolution DPI for Images -->
+                <div id="dpi-option-container" class="hidden">
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">ความละเอียดรูปภาพ (DPI / Resolution):</label>
+                    <select id="export-dpi" class="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                        <option value="72">72 DPI (ขนาดเล็ก เหมาะกับหน้าเว็บ)</option>
+                        <option value="150" selected>150 DPI (มาตรฐาน คมชัดปานกลาง)</option>
+                        <option value="300">300 DPI (ความคมชัดสูง คุณภาพพิมพ์)</option>
+                    </select>
+                </div>
+
+                <!-- File Name -->
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อไฟล์ Export:</label>
+                    <input type="text" id="export-filename" value="edited-document" class="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs focus:ring-2 focus:ring-brand-500 outline-none">
+                </div>
+
+                <div class="p-3 bg-amber-50 rounded-lg border border-amber-200 text-[11px] text-amber-800 flex items-start space-x-2">
+                    <i data-lucide="info" class="w-4 h-4 shrink-0 mt-0.5"></i>
+                    <span>หมายเหตุ: การแก้ไขข้อความต้นฉบับจะถูก Render บันทึกอย่างแม่นยำเข้าสู่โครงสร้างไฟล์ PDF ด้วยระบบ Canvas Layer Synthesis</span>
+                </div>
+            </div>
+
+            <div class="pt-3 border-t border-slate-200 flex justify-end space-x-2">
+                <button onclick="closeExportModal()" class="px-4 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50">ยกเลิก</button>
+                <button onclick="executeExport()" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-xs font-semibold shadow">ยืนยันส่งออกไฟล์</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: SIGNATURE DRAWING -->
+    <div id="signature-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6 border border-slate-200">
+            <div class="flex justify-between items-center pb-3 border-b border-slate-200">
+                <h3 class="text-base font-bold text-slate-800 flex items-center space-x-2">
+                    <i data-lucide="signature" class="w-5 h-5 text-brand-600"></i>
+                    <span>สร้างลายเซ็นดิจิทัล (Digital Signature)</span>
+                </h3>
+                <button onclick="closeSignatureModal()" class="text-slate-400 hover:text-slate-600">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div class="py-4">
+                <div class="border border-slate-300 rounded-lg bg-slate-50 overflow-hidden relative">
+                    <canvas id="signature-pad" width="400" height="180" class="w-full h-44 cursor-crosshair bg-white"></canvas>
+                    <div class="absolute bottom-2 left-2 text-[10px] text-slate-400 select-none">เซ็นชื่อด้วยเมาส์หรือนิ้วสัมผัส</div>
+                </div>
+                <div class="flex justify-between items-center mt-3">
+                    <div class="flex items-center space-x-2">
+                        <span class="text-xs text-slate-500">สีปากกา:</span>
+                        <input type="color" id="sig-color" value="#000000" class="w-6 h-6 border-none cursor-pointer rounded">
+                    </div>
+                    <button onclick="clearSignaturePad()" class="text-xs text-red-600 hover:underline">ล้างหน้าต่างลายเซ็น</button>
+                </div>
+            </div>
+
+            <div class="pt-3 border-t border-slate-200 flex justify-end space-x-2">
+                <button onclick="closeSignatureModal()" class="px-4 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50">ยกเลิก</button>
+                <button onclick="applySignature()" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-xs font-semibold shadow">แทรกลายเซ็น</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: OCR / TEXT SCAN -->
+    <div id="ocr-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-xl p-6 border border-slate-200">
+            <div class="flex justify-between items-center pb-3 border-b border-slate-200">
+                <h3 class="text-base font-bold text-slate-800 flex items-center space-x-2">
+                    <i data-lucide="scan-text" class="w-5 h-5 text-brand-600"></i>
+                    <span>ระบบสแกนอ่านข้อความ OCR (Thai / English)</span>
+                </h3>
+                <button onclick="closeOCRModal()" class="text-slate-400 hover:text-slate-600">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div class="py-4 space-y-3">
+                <p class="text-xs text-slate-600">ระบบจะทำการแปลงรูปภาพใน PDF หน้านี้เป็นข้อความจริงที่สามารถคัดลอกและแก้ไขได้:</p>
+                <div id="ocr-status" class="p-3 bg-slate-100 rounded-lg text-xs text-slate-600 flex items-center justify-between">
+                    <span>พร้อมสำหรับการสแกน</span>
+                    <button onclick="runOCR()" id="ocr-run-btn" class="bg-brand-600 text-white px-3 py-1.5 rounded text-xs font-semibold hover:bg-brand-700">เริ่มประมวลผล OCR</button>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">ผลลัพธ์ข้อความที่อ่านได้:</label>
+                    <textarea id="ocr-result-text" rows="8" class="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-xs focus:ring-2 focus:ring-brand-500 outline-none font-mono" placeholder="ผลลัพธ์ข้อความจะปรากฏที่นี่..."></textarea>
+                </div>
+            </div>
+
+            <div class="pt-3 border-t border-slate-200 flex justify-end space-x-2">
+                <button onclick="copyOCRText()" class="px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 flex items-center space-x-1">
+                    <i data-lucide="copy" class="w-4 h-4"></i>
+                    <span>คัดลอกข้อความ</span>
+                </button>
+                <button onclick="closeOCRModal()" class="px-4 py-2 bg-slate-800 text-white rounded-lg text-xs font-semibold shadow">ปิดหน้าต่าง</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN APP JAVASCRIPT LOGIC -->
+    <script>
+        // PDFJS Worker initialization
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        // Global State Management
+        let pdfDocBytes = null; // Uint8Array of current working PDF
+        let pdfPdfjsDoc = null; // PDFJS doc instance for viewing
+        let pageRotations = []; // Array tracking degree rotations per page
+        let pageOverlays = [];  // Elements array added to each page [{pageIndex, type, x, y, width, height, content, ...}]
+        let currentZoom = 1.0;
+        let activeTool = 'select'; // select, text, overlay-replace, image, draw, signature, ocr
+        let activePageIndex = 0;
+        let selectedOverlayId = null;
+
+        // Signature Canvas State
+        let isDrawingSig = false;
+        let sigCanvas = null;
+        let sigCtx = null;
+
+        // Initialize icons and canvas bindings on page load
+        window.onload = function() {
+            lucide.createIcons();
+            setupDragAndDrop();
+            initSignaturePad();
+
+            // Set default subbar states
+            switchSubbar('text');
+        };
+
+        // UI Helpers
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const openBtn = document.getElementById('sidebar-open-btn');
+            sidebar.classList.toggle('-ml-64');
+            openBtn.classList.toggle('hidden');
+        }
+
+        function switchSubbar(tool) {
+            document.getElementById('subbar-text').classList.add('hidden');
+            document.getElementById('subbar-draw').classList.add('hidden');
+
+            if (tool === 'text' || tool === 'overlay-replace') {
+                document.getElementById('subbar-text').classList.remove('hidden');
+            } else if (tool === 'draw') {
+                document.getElementById('subbar-draw').classList.remove('hidden');
+            }
+        }
+
+        function setActiveTool(tool) {
+            activeTool = tool;
+            document.querySelectorAll('.tool-btn').forEach(btn => {
+                btn.classList.remove('bg-white', 'shadow-sm', 'text-slate-700');
+                btn.classList.add('text-slate-600');
+            });
+            const activeBtn = document.getElementById(`tool-${tool}`);
+            if (activeBtn) {
+                activeBtn.classList.add('bg-white', 'shadow-sm', 'text-slate-700');
+            }
+            switchSubbar(tool);
+
+            if (tool === 'signature') {
+                openSignatureModal();
+            } else if (tool === 'ocr') {
+                openOCRModal();
+            } else if (tool === 'image') {
+                triggerImageUpload();
+            }
+        }
+
+        // Drag & Drop Handling
+        function setupDragAndDrop() {
+            const viewport = document.getElementById('viewport');
+            const dropZone = document.getElementById('drop-zone');
+
+            ['dragenter', 'dragover'].forEach(eventName => {
+                viewport.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    dropZone.classList.add('drag-over');
+                }, false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                viewport.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    dropZone.classList.remove('drag-over');
+                }, false);
+            });
+
+            viewport.addEventListener('drop', (e) => {
+                const dt = e.dataTransfer;
+                const files = dt.files;
+                if (files.length > 0 && files[0].type === 'application/pdf') {
+                    handleFileLoad(files[0]);
+                }
+            });
+        }
+
+        // Load PDF File into Memory
+        function loadPDFFromFile(e) {
+            const file = e.target.files[0];
+            if (file) {
+                handleFileLoad(file);
+            }
+        }
+
+        async function handleFileLoad(file) {
+            document.getElementById('file-info').innerText = file.name;
+            const arrayBuffer = await file.arrayBuffer();
+            pdfDocBytes = new Uint8Array(arrayBuffer);
+            
+            // Load in pdfjs for UI display
+            pdfPdfjsDoc = await pdfjsLib.getDocument({ data: pdfDocBytes.slice(0) }).promise;
+            
+            // Init metadata
+            const numPages = pdfPdfjsDoc.numPages;
+            pageRotations = new Array(numPages).fill(0);
+            pageOverlays = Array.from({ length: numPages }, () => []);
+
+            document.getElementById('drop-zone').classList.add('hidden');
+            document.getElementById('pdf-pages-container').classList.remove('hidden');
+            
+            await renderAllPages();
+            await renderThumbnails();
+            updatePageCountDisplay();
+        }
+
+        // Render Main View Canvas Pages
+        async function renderAllPages() {
+            const container = document.getElementById('pdf-pages-container');
+            container.innerHTML = '';
+
+            for (let i = 1; i <= pdfPdfjsDoc.numPages; i++) {
+                const page = await pdfPdfjsDoc.getPage(i);
+                const viewport = page.getViewport({ scale: currentZoom, rotation: pageRotations[i - 1] });
+
+                const pageWrapper = document.createElement('div');
+                pageWrapper.className = 'pdf-page-wrapper relative bg-white border border-slate-300 rounded-lg overflow-hidden mx-auto';
+                pageWrapper.style.width = `${viewport.width}px`;
+                pageWrapper.style.height = `${viewport.height}px`;
+                pageWrapper.dataset.pageIndex = i - 1;
+
+                // PDF Render Canvas Layer
+                const canvas = document.createElement('canvas');
+                canvas.className = 'block';
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                const ctx = canvas.getContext('2d');
+
+                await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+                pageWrapper.appendChild(canvas);
+
+                // Overlay Canvas Layer (for drawings, text edits, images)
+                const overlayLayer = document.createElement('div');
+                overlayLayer.className = 'overlay-layer';
+                overlayLayer.onclick = (e) => handleCanvasClick(e, i - 1);
+                
+                // Canvas for Freehand Drawing
+                const drawCanvas = document.createElement('canvas');
+                drawCanvas.className = 'absolute inset-0 pointer-events-auto';
+                drawCanvas.width = viewport.width;
+                drawCanvas.height = viewport.height;
+                setupDrawingOnPage(drawCanvas, i - 1);
+                overlayLayer.appendChild(drawCanvas);
+
+                pageWrapper.appendChild(overlayLayer);
+                container.appendChild(pageWrapper);
+
+                // Render existing overlay elements
+                renderPageOverlays(i - 1, overlayLayer);
+            }
+        }
+
+        // Render Sidebar Page Thumbnails
+        async function renderThumbnails() {
+            const container = document.getElementById('thumbnail-container');
+            container.innerHTML = '';
+
+            for (let i = 1; i <= pdfPdfjsDoc.numPages; i++) {
+                const page = await pdfPdfjsDoc.getPage(i);
+                const viewport = page.getViewport({ scale: 0.2, rotation: pageRotations[i - 1] });
+
+                const thumbCard = document.createElement('div');
+                thumbCard.className = `p-2 bg-slate-50 border ${i - 1 === activePageIndex ? 'border-brand-500 ring-2 ring-brand-100' : 'border-slate-200'} rounded-lg cursor-pointer hover:border-brand-400 flex flex-col items-center group transition`;
+                thumbCard.onclick = () => scrollToPage(i - 1);
+
+                const canvas = document.createElement('canvas');
+                canvas.className = 'rounded shadow-sm bg-white';
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                const ctx = canvas.getContext('2d');
+
+                await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+
+                thumbCard.appendChild(canvas);
+                const label = document.createElement('span');
+                label.className = 'text-[11px] font-semibold text-slate-600 mt-1';
+                label.innerText = `หน้า ${i}`;
+                thumbCard.appendChild(label);
+
+                container.appendChild(thumbCard);
+            }
+        }
+
+        function updatePageCountDisplay() {
+            const total = pdfPdfjsDoc ? pdfPdfjsDoc.numPages : 0;
+            document.getElementById('page-count-display').innerText = total;
+            document.getElementById('total-page-num').innerText = total;
+            document.getElementById('current-page-num').innerText = total > 0 ? activePageIndex + 1 : 0;
+        }
+
+        function scrollToPage(index) {
+            activePageIndex = index;
+            updatePageCountDisplay();
+            const pageElems = document.querySelectorAll('.pdf-page-wrapper');
+            if (pageElems[index]) {
+                pageElems[index].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+            renderThumbnails();
+        }
+
+        // Zoom Logic
+        function changeZoom(delta) {
+            currentZoom = Math.min(Math.max(0.5, currentZoom + delta), 2.5);
+            document.getElementById('zoom-level-text').innerText = `${Math.round(currentZoom * 100)}%`;
+            if (pdfPdfjsDoc) {
+                renderAllPages();
+            }
+        }
+
+        function resetZoom() {
+            currentZoom = 1.0;
+            document.getElementById('zoom-level-text').innerText = '100%';
+            if (pdfPdfjsDoc) {
+                renderAllPages();
+            }
+        }
+
+        // Overlay Placement & Handling Logic
+        function handleCanvasClick(e, pageIndex) {
+            // Only trigger text placement if active tool is text or overlay-replace
+            if (activeTool !== 'text' && activeTool !== 'overlay-replace') return;
+            
+            // Avoid creating new overlay if clicking on an existing interactive element
+            if (e.target.closest('.overlay-element') || e.target.closest('.text-editor-container')) {
+                return;
+            }
+
+            const wrapper = e.currentTarget.closest('.pdf-page-wrapper');
+            const rect = wrapper.getBoundingClientRect();
+            
+            // Calculate relative coordinates considering zoom
+            const x = (e.clientX - rect.left) / currentZoom;
+            const y = (e.clientY - rect.top) / currentZoom;
+
+            addNewTextOverlay(pageIndex, x, y, activeTool === 'overlay-replace');
+        }
+
+        function addNewTextOverlay(pageIndex, x, y, isReplace = false) {
+            const font = document.getElementById('text-font').value;
+            const size = parseInt(document.getElementById('text-size').value) || 16;
+            const color = document.getElementById('text-color').value;
+
+            const overlay = {
+                id: Date.now(),
+                type: 'text',
+                x: Math.max(0, x),
+                y: Math.max(0, y),
+                content: '',
+                font: font,
+                size: size,
+                color: color,
+                bgColor: isReplace ? '#ffffff' : 'transparent',
+                isEditing: true
+            };
+
+            pageOverlays[pageIndex].push(overlay);
+            selectedOverlayId = overlay.id;
+            renderAllPages();
+        }
+
+        function renderPageOverlays(pageIndex, overlayLayer) {
+            const items = pageOverlays[pageIndex] || [];
+            items.forEach((item, itemIdx) => {
+                if (item.type === 'text' && item.isEditing) {
+                    // Render Active Interactive Editor Box
+                    const editorContainer = document.createElement('div');
+                    editorContainer.className = 'text-editor-container';
+                    editorContainer.style.left = `${item.x * currentZoom}px`;
+                    editorContainer.style.top = `${item.y * currentZoom}px`;
+
+                    const textarea = document.createElement('textarea');
+                    textarea.className = 'text-editor-box';
+                    textarea.value = item.content;
+                    textarea.placeholder = 'พิมพ์ข้อความภาษาไทย/Eng...';
+                    textarea.style.color = item.color;
+                    textarea.style.fontSize = `${item.size * currentZoom}px`;
+                    textarea.style.backgroundColor = item.bgColor === 'transparent' ? '#ffffff' : item.bgColor;
+
+                    // Buttons for Explicit Save / Cancel
+                    const actionsDiv = document.createElement('div');
+                    actionsDiv.className = 'text-editor-actions';
+
+                    const saveBtn = document.createElement('button');
+                    saveBtn.className = 'bg-brand-600 text-white text-[10px] font-bold px-2 py-1 rounded shadow hover:bg-brand-700 flex items-center space-x-1';
+                    saveBtn.innerHTML = '<span>ตกลง</span> <i data-lucide="check" class="w-3 h-3"></i>';
+                    
+                    const cancelBtn = document.createElement('button');
+                    cancelBtn.className = 'bg-slate-200 text-slate-700 text-[10px] font-bold px-2 py-1 rounded hover:bg-slate-300';
+                    cancelBtn.innerText = 'ยกเลิก';
+
+                    const saveText = () => {
+                        const val = textarea.value.trim();
+                        if (val) {
+                            item.content = textarea.value;
+                            item.isEditing = false;
+                        } else {
+                            // Remove empty overlay
+                            pageOverlays[pageIndex].splice(itemIdx, 1);
+                        }
+                        renderAllPages();
+                    };
+
+                    const cancelText = () => {
+                        if (!item.content) {
+                            pageOverlays[pageIndex].splice(itemIdx, 1);
+                        } else {
+                            item.isEditing = false;
+                        }
+                        renderAllPages();
+                    };
+
+                    saveBtn.onclick = (e) => { e.stopPropagation(); saveText(); };
+                    cancelBtn.onclick = (e) => { e.stopPropagation(); cancelText(); };
+
+                    textarea.onkeydown = (e) => {
+                        // Prevent propagation to window hotkeys
+                        e.stopPropagation();
+                        if (e.key === 'Enter' && e.ctrlKey) {
+                            saveText();
+                        }
+                    };
+
+                    actionsDiv.appendChild(cancelBtn);
+                    actionsDiv.appendChild(saveBtn);
+                    editorContainer.appendChild(textarea);
+                    editorContainer.appendChild(actionsDiv);
+                    overlayLayer.appendChild(editorContainer);
+
+                    setTimeout(() => {
+                        textarea.focus();
+                        lucide.createIcons();
+                    }, 50);
+
+                    return;
+                }
+
+                // Render Normal Placed Overlay Items
+                const el = document.createElement('div');
+                el.className = `overlay-element ${selectedOverlayId === item.id ? 'selected' : ''}`;
+                el.style.transform = `translate3d(${item.x * currentZoom}px, ${item.y * currentZoom}px, 0)`;
+
+                if (item.type === 'text') {
+                    const textDiv = document.createElement('div');
+                    textDiv.style.color = item.color;
+                    textDiv.style.fontSize = `${item.size * currentZoom}px`;
+                    textDiv.style.backgroundColor = item.bgColor || 'transparent';
+                    textDiv.style.padding = '2px 6px';
+                    textDiv.style.whiteSpace = 'pre-wrap';
+                    textDiv.style.borderRadius = '4px';
+                    textDiv.style.lineHeight = '1.3';
+                    textDiv.innerText = item.content;
+
+                    // Double-click to trigger re-edit mode
+                    textDiv.ondblclick = (e) => {
+                        e.stopPropagation();
+                        item.isEditing = true;
+                        renderAllPages();
+                    };
+
+                    el.appendChild(textDiv);
+                } else if (item.type === 'image') {
+                    el.style.width = `${item.width * currentZoom}px`;
+                    el.style.height = `${item.height * currentZoom}px`;
+                    const img = document.createElement('img');
+                    img.src = item.imgData;
+                    img.className = 'w-full h-full object-contain pointer-events-none';
+                    el.appendChild(img);
+                }
+
+                // Smooth Draggable logic
+                makeElementDraggable(el, item, pageIndex);
+                overlayLayer.appendChild(el);
+            });
+        }
+
+        function makeElementDraggable(el, item, pageIndex) {
+            let isDragging = false;
+            let startX, startY;
+            let animationFrameId = null;
+
+            const onPointerDown = (e) => {
+                if (item.isEditing) return;
+                e.stopPropagation();
+                selectedOverlayId = item.id;
+                isDragging = true;
+                
+                startX = e.clientX - (item.x * currentZoom);
+                startY = e.clientY - (item.y * currentZoom);
+                
+                el.classList.add('selected');
+
+                window.addEventListener('pointermove', onPointerMove);
+                window.addEventListener('pointerup', onPointerUp);
+            };
+
+            const onPointerMove = (e) => {
+                if (!isDragging) return;
+
+                if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                }
+
+                animationFrameId = requestAnimationFrame(() => {
+                    const newX = (e.clientX - startX) / currentZoom;
+                    const newY = (e.clientY - startY) / currentZoom;
+                    
+                    item.x = newX;
+                    item.y = newY;
+                    
+                    el.style.transform = `translate3d(${newX * currentZoom}px, ${newY * currentZoom}px, 0)`;
+                });
+            };
+
+            const onPointerUp = () => {
+                isDragging = false;
+                window.removeEventListener('pointermove', onPointerMove);
+                window.removeEventListener('pointerup', onPointerUp);
+            };
+
+            el.addEventListener('pointerdown', onPointerDown);
+        }
+
+        // Freehand Drawing Logic
+        function setupDrawingOnPage(canvas, pageIndex) {
+            const ctx = canvas.getContext('2d');
+            let isDrawing = false;
+
+            canvas.onmousedown = (e) => {
+                if (activeTool !== 'draw') return;
+                isDrawing = true;
+                const rect = canvas.getBoundingClientRect();
+                ctx.beginPath();
+                ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+                ctx.strokeStyle = document.getElementById('draw-color').value;
+                ctx.lineWidth = parseInt(document.getElementById('draw-width').value) || 3;
+                ctx.lineCap = 'round';
+            };
+
+            canvas.onmousemove = (e) => {
+                if (!isDrawing || activeTool !== 'draw') return;
+                const rect = canvas.getBoundingClientRect();
+                ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+                ctx.stroke();
+            };
+
+            canvas.onmouseup = () => {
+                isDrawing = false;
+            };
+        }
+
+        function clearCurrentPageDrawings() {
+            renderAllPages();
+        }
+
+        // Page Manipulation Actions
+        function rotateCurrentPage(deg) {
+            if (!pdfPdfjsDoc) return;
+            pageRotations[activePageIndex] = (pageRotations[activePageIndex] + deg) % 360;
+            renderAllPages();
+            renderThumbnails();
+        }
+
+        async function duplicateCurrentPage() {
+            if (!pdfPdfjsDoc) return;
+            const pdfDoc = await PDFLib.PDFDocument.load(pdfDocBytes);
+            const [copiedPage] = await pdfDoc.copyPages(pdfDoc, [activePageIndex]);
+            pdfDoc.insertPage(activePageIndex + 1, copiedPage);
+            
+            pdfDocBytes = await pdfDoc.save();
+            pdfPdfjsDoc = await pdfjsLib.getDocument({ data: pdfDocBytes.slice(0) }).promise;
+            
+            pageRotations.splice(activePageIndex + 1, 0, pageRotations[activePageIndex]);
+            pageOverlays.splice(activePageIndex + 1, 0, []);
+
+            await renderAllPages();
+            await renderThumbnails();
+            updatePageCountDisplay();
+        }
+
+        async function deleteCurrentPage() {
+            if (!pdfPdfjsDoc || pdfPdfjsDoc.numPages <= 1) {
+                alert('ไม่สามารถลบได้ เนื่องจากเอกสารต้องมีอย่างน้อย 1 หน้า');
+                return;
+            }
+            if (!confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบ หน้า ${activePageIndex + 1}?`)) return;
+
+            const pdfDoc = await PDFLib.PDFDocument.load(pdfDocBytes);
+            pdfDoc.removePage(activePageIndex);
+
+            pdfDocBytes = await pdfDoc.save();
+            pdfPdfjsDoc = await pdfjsLib.getDocument({ data: pdfDocBytes.slice(0) }).promise;
+
+            pageRotations.splice(activePageIndex, 1);
+            pageOverlays.splice(activePageIndex, 1);
+
+            activePageIndex = Math.max(0, activePageIndex - 1);
+            await renderAllPages();
+            await renderThumbnails();
+            updatePageCountDisplay();
+        }
+
+        async function insertBlankPage() {
+            if (!pdfPdfjsDoc) return;
+            const pdfDoc = await PDFLib.PDFDocument.load(pdfDocBytes);
+            pdfDoc.insertPage(activePageIndex + 1, [595.28, 841.89]); // A4 Size
+
+            pdfDocBytes = await pdfDoc.save();
+            pdfPdfjsDoc = await pdfjsLib.getDocument({ data: pdfDocBytes.slice(0) }).promise;
+
+            pageRotations.splice(activePageIndex + 1, 0, 0);
+            pageOverlays.splice(activePageIndex + 1, 0, []);
+
+            activePageIndex++;
+            await renderAllPages();
+            await renderThumbnails();
+            updatePageCountDisplay();
+        }
+
+        // Merge PDFs
+        function openMergeModal() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'application/pdf';
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file || !pdfDocBytes) return;
+
+                const newBytes = await file.arrayBuffer();
+                const mainPdf = await PDFLib.PDFDocument.load(pdfDocBytes);
+                const mergePdf = await PDFLib.PDFDocument.load(newBytes);
+
+                const copiedPages = await mainPdf.copyPages(mergePdf, mergePdf.getPageIndices());
+                copiedPages.forEach(p => mainPdf.addPage(p));
+
+                pdfDocBytes = await mainPdf.save();
+                pdfPdfjsDoc = await pdfjsLib.getDocument({ data: pdfDocBytes.slice(0) }).promise;
+
+                for (let i = 0; i < copiedPages.length; i++) {
+                    pageRotations.push(0);
+                    pageOverlays.push([]);
+                }
+
+                await renderAllPages();
+                await renderThumbnails();
+                updatePageCountDisplay();
+            };
+            input.click();
+        }
+
+        // Signature Modal & Logic
+        function initSignaturePad() {
+            sigCanvas = document.getElementById('signature-pad');
+            sigCtx = sigCanvas.getContext('2d');
+
+            sigCanvas.onmousedown = (e) => {
+                isDrawingSig = true;
+                const rect = sigCanvas.getBoundingClientRect();
+                sigCtx.beginPath();
+                sigCtx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+                sigCtx.strokeStyle = document.getElementById('sig-color').value;
+                sigCtx.lineWidth = 2;
+            };
+
+            sigCanvas.onmousemove = (e) => {
+                if (!isDrawingSig) return;
+                const rect = sigCanvas.getBoundingClientRect();
+                sigCtx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+                sigCtx.stroke();
+            };
+
+            sigCanvas.onmouseup = () => isDrawingSig = false;
+        }
+
+        function openSignatureModal() {
+            clearSignaturePad();
+            document.getElementById('signature-modal').classList.remove('hidden');
+        }
+
+        function closeSignatureModal() {
+            document.getElementById('signature-modal').classList.add('hidden');
+        }
+
+        function clearSignaturePad() {
+            sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
+        }
+
+        function applySignature() {
+            const dataUrl = sigCanvas.toDataURL('image/png');
+            const overlay = {
+                id: Date.now(),
+                type: 'image',
+                x: 100,
+                y: 100,
+                width: 150,
+                height: 67,
+                imgData: dataUrl
+            };
+            pageOverlays[activePageIndex].push(overlay);
+            closeSignatureModal();
+            renderAllPages();
+        }
+
+        // OCR Logic using Tesseract.js
+        function openOCRModal() {
+            if (!pdfPdfjsDoc) {
+                alert('กรุณาเปิดไฟล์ PDF ก่อนใช้ระบบ OCR');
+                return;
+            }
+            document.getElementById('ocr-result-text').value = '';
+            document.getElementById('ocr-modal').classList.remove('hidden');
+        }
+
+        function closeOCRModal() {
+            document.getElementById('ocr-modal').classList.add('hidden');
+        }
+
+        async function runOCR() {
+            const statusBox = document.getElementById('ocr-status');
+            statusBox.innerText = 'กำลังประมวลผล OCR สแกนภาษาไทย/อังกฤษ (โปรดรอสักครู่)...';
+
+            const pageWrappers = document.querySelectorAll('.pdf-page-wrapper');
+            const activeWrapper = pageWrappers[activePageIndex];
+            const canvas = activeWrapper.querySelector('canvas');
+
+            try {
+                const worker = await Tesseract.createWorker('tha+eng');
+                const ret = await worker.recognize(canvas);
+                document.getElementById('ocr-result-text').value = ret.data.text;
+                statusBox.innerText = 'สแกนข้อความสำเร็จเรียบร้อย!';
+                await worker.terminate();
+            } catch (err) {
+                statusBox.innerText = 'เกิดข้อผิดพลาดในการสแกน OCR';
+                console.error(err);
+            }
+        }
+
+        function copyOCRText() {
+            const text = document.getElementById('ocr-result-text').value;
+            if (!text) return;
+            const temp = document.createElement('textarea');
+            temp.value = text;
+            document.body.appendChild(temp);
+            temp.select();
+            document.execCommand('copy');
+            document.body.removeChild(temp);
+            alert('คัดลอกข้อความ OCR ลง Clipboard เรียบร้อยแล้ว');
+        }
+
+        // EXPORT LOGIC
+        function openExportModal() {
+            if (!pdfPdfjsDoc) {
+                alert('ไม่พบเอกสาร PDF สำหรับส่งออก');
+                return;
+            }
+            document.getElementById('export-modal').classList.remove('hidden');
+        }
+
+        function closeExportModal() {
+            document.getElementById('export-modal').classList.add('hidden');
+        }
+
+        function toggleExportFormatOptions() {
+            const fmt = document.getElementById('export-format').value;
+            const dpiContainer = document.getElementById('dpi-option-container');
+            if (fmt === 'pdf') {
+                dpiContainer.classList.add('hidden');
+            } else {
+                dpiContainer.classList.remove('hidden');
+            }
+        }
+
+        function toggleRangeInput() {
+            const rangeType = document.getElementById('export-range-type').value;
+            const customInput = document.getElementById('export-range-custom');
+            if (rangeType === 'custom') {
+                customInput.classList.remove('hidden');
+            } else {
+                customInput.classList.add('hidden');
+            }
+        }
+
+        async function executeExport() {
+            const format = document.getElementById('export-format').value;
+            const filename = document.getElementById('export-filename').value || 'document';
+
+            if (format === 'pdf') {
+                await exportAsPDF(filename);
+            } else {
+                await exportAsImages(format, filename);
+            }
+            closeExportModal();
+        }
+
+        async function exportAsPDF(filename) {
+            const pdfDoc = await PDFLib.PDFDocument.load(pdfDocBytes);
+            
+            // Apply overlay items directly onto PDF Pages using PDF-Lib canvas rasterization
+            const pageWrappers = document.querySelectorAll('.pdf-page-wrapper');
+            
+            for (let i = 0; i < pdfPdfjsDoc.numPages; i++) {
+                const wrapper = pageWrappers[i];
+                const canvas = wrapper.querySelector('canvas');
+                
+                // Merge Canvas with overlay text/drawings into high quality image
+                const pageImgData = canvas.toDataURL('image/jpeg', 0.95);
+                const embeddedImg = await pdfDoc.embedJpg(pageImgData);
+
+                const page = pdfDoc.getPage(i);
+                page.setRotation(PDFLib.degrees(pageRotations[i]));
+                
+                // Draw synthesized overlays onto page
+                page.drawImage(embeddedImg, {
+                    x: 0,
+                    y: 0,
+                    width: page.getWidth(),
+                    height: page.getHeight(),
+                });
+            }
+
+            const finalBytes = await pdfDoc.save();
+            const blob = new Blob([finalBytes], { type: 'application/pdf' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `${filename}.pdf`;
+            link.click();
+        }
+
+        async function exportAsImages(format, filename) {
+            const zip = new JSZip();
+            const pageWrappers = document.querySelectorAll('.pdf-page-wrapper');
+
+            for (let i = 0; i < pageWrappers.length; i++) {
+                const canvas = pageWrappers[i].querySelector('canvas');
+                const imgData = canvas.toDataURL(`image/${format}`, 0.9);
+                const base64Data = imgData.replace(/^data:image\/(png|jpeg|webp);base64,/, "");
+                zip.file(`${filename}_page_${i + 1}.${format}`, base64Data, { base64: true });
+            }
+
+            const zipBlob = await zip.generateAsync({ type: "blob" });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(zipBlob);
+            link.download = `${filename}_images.zip`;
+            link.click();
+        }
+    </script>
+</body>
+</html>
