@@ -181,6 +181,16 @@
                 <i data-lucide="scan-text" class="w-4 h-4"></i>
                 <span>OCR อ่านข้อความ</span>
             </button>
+            <div class="h-4 w-px bg-slate-300 mx-1"></div>
+            <!-- NEW: Image to PDF & Combine Tools -->
+            <button onclick="convertImagesToPDF()" id="tool-img-to-pdf" class="tool-btn flex items-center space-x-1 px-3 py-1.5 rounded-md text-xs font-medium text-brand-700 bg-brand-50 hover:bg-white border border-brand-200 transition">
+                <i data-lucide="file-image" class="w-4 h-4"></i>
+                <span>แปลงภาพเป็น PDF</span>
+            </button>
+            <button onclick="openMergeModal()" id="tool-combine" class="tool-btn flex items-center space-x-1 px-3 py-1.5 rounded-md text-xs font-medium text-brand-700 bg-brand-50 hover:bg-white border border-brand-200 transition">
+                <i data-lucide="combine" class="w-4 h-4"></i>
+                <span>Combine PDF</span>
+            </button>
         </div>
 
         <!-- Right Side Actions -->
@@ -942,34 +952,66 @@
                 ctx.stroke();
             };
 
-            canvas.onmouseup = () => {
-                isDrawing = false;
-            };
+            canvas.onmouseup = () => { isDrawing = false; };
+            canvas.onmouseleave = () => { isDrawing = false; };
         }
 
         function clearCurrentPageDrawings() {
-            renderAllPages();
+            const pageWrappers = document.querySelectorAll('.pdf-page-wrapper');
+            if (pageWrappers[activePageIndex]) {
+                const drawCanvas = pageWrappers[activePageIndex].querySelectorAll('canvas')[1];
+                if (drawCanvas) {
+                    const ctx = drawCanvas.getContext('2d');
+                    ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+                }
+            }
         }
 
-        // Page Manipulation Actions
-        function rotateCurrentPage(deg) {
+        function triggerImageUpload() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/*';
+            input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const overlay = {
+                        id: Date.now(),
+                        type: 'image',
+                        x: 50,
+                        y: 50,
+                        width: 150,
+                        height: 150,
+                        imgData: event.target.result
+                    };
+                    pageOverlays[activePageIndex].push(overlay);
+                    renderAllPages();
+                };
+                reader.readAsDataURL(file);
+            };
+            input.click();
+        }
+
+        // Page Manipulation Tools
+        async function rotateCurrentPage(angle) {
             if (!pdfPdfjsDoc) return;
-            pageRotations[activePageIndex] = (pageRotations[activePageIndex] + deg) % 360;
-            renderAllPages();
-            renderThumbnails();
+            pageRotations[activePageIndex] = (pageRotations[activePageIndex] + angle) % 360;
+            await renderAllPages();
+            await renderThumbnails();
         }
 
         async function duplicateCurrentPage() {
-            if (!pdfPdfjsDoc) return;
+            if (!pdfDocBytes) return;
             const pdfDoc = await PDFLib.PDFDocument.load(pdfDocBytes);
             const [copiedPage] = await pdfDoc.copyPages(pdfDoc, [activePageIndex]);
             pdfDoc.insertPage(activePageIndex + 1, copiedPage);
-            
-            pdfDocBytes = await pdfDoc.save();
-            pdfPdfjsDoc = await pdfjsLib.getDocument({ data: pdfDocBytes.slice(0) }).promise;
-            
+
             pageRotations.splice(activePageIndex + 1, 0, pageRotations[activePageIndex]);
             pageOverlays.splice(activePageIndex + 1, 0, []);
+
+            pdfDocBytes = await pdfDoc.save();
+            pdfPdfjsDoc = await pdfjsLib.getDocument({ data: pdfDocBytes.slice(0) }).promise;
 
             await renderAllPages();
             await renderThumbnails();
@@ -977,67 +1019,148 @@
         }
 
         async function deleteCurrentPage() {
-            if (!pdfPdfjsDoc || pdfPdfjsDoc.numPages <= 1) {
-                alert('ไม่สามารถลบได้ เนื่องจากเอกสารต้องมีอย่างน้อย 1 หน้า');
+            if (!pdfDocBytes) return;
+            if (pdfPdfjsDoc.numPages <= 1) {
+                alert('ไม่สามารถลบได้ เนื่องจากต้องมีอย่างน้อย 1 หน้า');
                 return;
             }
-            if (!confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบ หน้า ${activePageIndex + 1}?`)) return;
 
             const pdfDoc = await PDFLib.PDFDocument.load(pdfDocBytes);
             pdfDoc.removePage(activePageIndex);
 
-            pdfDocBytes = await pdfDoc.save();
-            pdfPdfjsDoc = await pdfjsLib.getDocument({ data: pdfDocBytes.slice(0) }).promise;
-
             pageRotations.splice(activePageIndex, 1);
             pageOverlays.splice(activePageIndex, 1);
 
-            activePageIndex = Math.max(0, activePageIndex - 1);
+            pdfDocBytes = await pdfDoc.save();
+            pdfPdfjsDoc = await pdfjsLib.getDocument({ data: pdfDocBytes.slice(0) }).promise;
+
+            if (activePageIndex >= pdfPdfjsDoc.numPages) {
+                activePageIndex = pdfPdfjsDoc.numPages - 1;
+            }
+
             await renderAllPages();
             await renderThumbnails();
             updatePageCountDisplay();
         }
 
         async function insertBlankPage() {
-            if (!pdfPdfjsDoc) return;
+            if (!pdfDocBytes) return;
             const pdfDoc = await PDFLib.PDFDocument.load(pdfDocBytes);
             pdfDoc.insertPage(activePageIndex + 1, [595.28, 841.89]); // A4 Size
-
-            pdfDocBytes = await pdfDoc.save();
-            pdfPdfjsDoc = await pdfjsLib.getDocument({ data: pdfDocBytes.slice(0) }).promise;
 
             pageRotations.splice(activePageIndex + 1, 0, 0);
             pageOverlays.splice(activePageIndex + 1, 0, []);
 
-            activePageIndex++;
+            pdfDocBytes = await pdfDoc.save();
+            pdfPdfjsDoc = await pdfjsLib.getDocument({ data: pdfDocBytes.slice(0) }).promise;
+
             await renderAllPages();
             await renderThumbnails();
             updatePageCountDisplay();
         }
 
-        // Merge PDFs
+        // Merge PDFs / Combine PDF Logic
         function openMergeModal() {
             const input = document.createElement('input');
             input.type = 'file';
             input.accept = 'application/pdf';
+            input.multiple = true;
             input.onchange = async (e) => {
-                const file = e.target.files[0];
-                if (!file || !pdfDocBytes) return;
+                const files = Array.from(e.target.files);
+                if (!files.length) return;
 
-                const newBytes = await file.arrayBuffer();
-                const mainPdf = await PDFLib.PDFDocument.load(pdfDocBytes);
-                const mergePdf = await PDFLib.PDFDocument.load(newBytes);
+                let mainPdf;
+                if (!pdfDocBytes) {
+                    // If no document is open, load the first file as main
+                    const firstBytes = await files[0].arrayBuffer();
+                    mainPdf = await PDFLib.PDFDocument.load(firstBytes);
+                    pageRotations = new Array(mainPdf.getPageCount()).fill(0);
+                    pageOverlays = Array.from({ length: mainPdf.getPageCount() }, () => []);
+                    files.shift(); // Remove first file as it's loaded as base
+                } else {
+                    mainPdf = await PDFLib.PDFDocument.load(pdfDocBytes);
+                }
 
-                const copiedPages = await mainPdf.copyPages(mergePdf, mergePdf.getPageIndices());
-                copiedPages.forEach(p => mainPdf.addPage(p));
+                for (const file of files) {
+                    const newBytes = await file.arrayBuffer();
+                    const mergePdf = await PDFLib.PDFDocument.load(newBytes);
+                    const copiedPages = await mainPdf.copyPages(mergePdf, mergePdf.getPageIndices());
+                    copiedPages.forEach(p => mainPdf.addPage(p));
+
+                    for (let i = 0; i < copiedPages.length; i++) {
+                        pageRotations.push(0);
+                        pageOverlays.push([]);
+                    }
+                }
 
                 pdfDocBytes = await mainPdf.save();
                 pdfPdfjsDoc = await pdfjsLib.getDocument({ data: pdfDocBytes.slice(0) }).promise;
 
-                for (let i = 0; i < copiedPages.length; i++) {
-                    pageRotations.push(0);
-                    pageOverlays.push([]);
+                document.getElementById('drop-zone').classList.add('hidden');
+                document.getElementById('pdf-pages-container').classList.remove('hidden');
+
+                await renderAllPages();
+                await renderThumbnails();
+                updatePageCountDisplay();
+            };
+            input.click();
+        }
+
+        // NEW: Convert Images (JPG, PNG, WebP) to PDF
+        function convertImagesToPDF() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/jpeg, image/png, image/webp';
+            input.multiple = true;
+            input.onchange = async (e) => {
+                const files = Array.from(e.target.files);
+                if (!files.length) return;
+
+                // Create a new PDF document
+                const pdfDoc = await PDFLib.PDFDocument.create();
+
+                for (const file of files) {
+                    const arrayBuffer = await file.arrayBuffer();
+                    let image;
+
+                    if (file.type === 'image/png') {
+                        image = await pdfDoc.embedPng(arrayBuffer);
+                    } else if (file.type === 'image/jpeg' || file.type === 'image/jpg') {
+                        image = await pdfDoc.embedJpg(arrayBuffer);
+                    } else {
+                        // For WebP or other images, convert via canvas to PNG first
+                        const imgBitmap = await createImageBitmap(file);
+                        const canvas = document.createElement('canvas');
+                        canvas.width = imgBitmap.width;
+                        canvas.height = imgBitmap.height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(imgBitmap, 0, 0);
+                        const pngDataUrl = canvas.toDataURL('image/png');
+                        const response = await fetch(pngDataUrl);
+                        const pngBuffer = await response.arrayBuffer();
+                        image = await pdfDoc.embedPng(pngBuffer);
+                    }
+
+                    // Add page with the image dimensions
+                    const page = pdfDoc.addPage([image.width, image.height]);
+                    page.drawImage(image, {
+                        x: 0,
+                        y: 0,
+                        width: image.width,
+                        height: image.height,
+                    });
                 }
+
+                pdfDocBytes = await pdfDoc.save();
+                pdfPdfjsDoc = await pdfjsLib.getDocument({ data: pdfDocBytes.slice(0) }).promise;
+
+                const numPages = pdfPdfjsDoc.numPages;
+                pageRotations = new Array(numPages).fill(0);
+                pageOverlays = Array.from({ length: numPages }, () => []);
+
+                document.getElementById('file-info').innerText = `แปลงจากรูปภาพ (${files.length} ภาพ)`;
+                document.getElementById('drop-zone').classList.add('hidden');
+                document.getElementById('pdf-pages-container').classList.remove('hidden');
 
                 await renderAllPages();
                 await renderThumbnails();
