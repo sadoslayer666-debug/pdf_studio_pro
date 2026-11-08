@@ -1106,66 +1106,136 @@
             input.click();
         }
 
-        // NEW: Convert Images (JPG, PNG, WebP) to PDF
+        // Convert common image formats to PDF (JPG, PNG, WebP, GIF, BMP and browser-decodable images)
         function convertImagesToPDF() {
+            if (typeof PDFLib === 'undefined' || !PDFLib.PDFDocument) {
+                alert('ไม่สามารถโหลด PDF engine ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วรีเฟรชหน้าเว็บ');
+                return;
+            }
+
             const input = document.createElement('input');
             input.type = 'file';
-            input.accept = 'image/jpeg, image/png, image/webp';
+            input.accept = 'image/*';
             input.multiple = true;
+
             input.onchange = async (e) => {
-                const files = Array.from(e.target.files);
+                const files = Array.from(e.target.files || []);
                 if (!files.length) return;
 
-                // Create a new PDF document
-                const pdfDoc = await PDFLib.PDFDocument.create();
+                try {
+                    const pdfDoc = await PDFLib.PDFDocument.create();
 
-                for (const file of files) {
-                    const arrayBuffer = await file.arrayBuffer();
-                    let image;
+                    for (const file of files) {
+                        if (!file.type.startsWith('image/')) {
+                            throw new Error(`ไฟล์ "${file.name}" ไม่ใช่ไฟล์ภาพ`);
+                        }
 
-                    if (file.type === 'image/png') {
-                        image = await pdfDoc.embedPng(arrayBuffer);
-                    } else if (file.type === 'image/jpeg' || file.type === 'image/jpg') {
-                        image = await pdfDoc.embedJpg(arrayBuffer);
-                    } else {
-                        // For WebP or other images, convert via canvas to PNG first
-                        const imgBitmap = await createImageBitmap(file);
-                        const canvas = document.createElement('canvas');
-                        canvas.width = imgBitmap.width;
-                        canvas.height = imgBitmap.height;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(imgBitmap, 0, 0);
-                        const pngDataUrl = canvas.toDataURL('image/png');
-                        const response = await fetch(pngDataUrl);
-                        const pngBuffer = await response.arrayBuffer();
-                        image = await pdfDoc.embedPng(pngBuffer);
+                        let image;
+                        const mime = (file.type || '').toLowerCase();
+
+                        // Embed JPEG/PNG directly to preserve their original quality.
+                        if (mime === 'image/jpeg' || mime === 'image/jpg') {
+                            image = await pdfDoc.embedJpg(await file.arrayBuffer());
+                        } else if (mime === 'image/png') {
+                            image = await pdfDoc.embedPng(await file.arrayBuffer());
+                        } else {
+                            // Normalize WebP/GIF/BMP/SVG and other browser-decodable formats to PNG.
+                            let bitmap = null;
+                            let objectUrl = null;
+                            let source = null;
+
+                            try {
+                                if (typeof createImageBitmap === 'function') {
+                                    bitmap = await createImageBitmap(file);
+                                    source = bitmap;
+                                } else {
+                                    const img = new Image();
+                                    objectUrl = URL.createObjectURL(file);
+                                    img.src = objectUrl;
+                                    await new Promise((resolve, reject) => {
+                                        img.onload = resolve;
+                                        img.onerror = () => reject(new Error(`เบราว์เซอร์ไม่สามารถอ่านภาพ "${file.name}" ได้`));
+                                    });
+                                    source = img;
+                                }
+
+                                const width = source.width || source.naturalWidth;
+                                const height = source.height || source.naturalHeight;
+                                if (!width || !height) {
+                                    throw new Error(`ภาพ "${file.name}" ไม่มีขนาดภาพที่ถูกต้อง`);
+                                }
+
+                                const canvas = document.createElement('canvas');
+                                canvas.width = width;
+                                canvas.height = height;
+                                const ctx = canvas.getContext('2d');
+                                if (!ctx) throw new Error('ไม่สามารถสร้าง Canvas เพื่อแปลงภาพได้');
+
+                                ctx.drawImage(source, 0, 0, width, height);
+
+                                const pngBlob = await new Promise((resolve, reject) => {
+                                    canvas.toBlob(blob => {
+                                        if (blob) resolve(blob);
+                                        else reject(new Error(`ไม่สามารถแปลงภาพ "${file.name}" เป็น PNG ได้`));
+                                    }, 'image/png');
+                                });
+
+                                image = await pdfDoc.embedPng(await pngBlob.arrayBuffer());
+                            } finally {
+                                if (bitmap && typeof bitmap.close === 'function') bitmap.close();
+                                if (objectUrl) URL.revokeObjectURL(objectUrl);
+                            }
+                        }
+
+                        // One image per PDF page, keeping the image's original pixel dimensions.
+                        const page = pdfDoc.addPage([image.width, image.height]);
+                        page.drawImage(image, {
+                            x: 0,
+                            y: 0,
+                            width: image.width,
+                            height: image.height
+                        });
                     }
 
-                    // Add page with the image dimensions
-                    const page = pdfDoc.addPage([image.width, image.height]);
-                    page.drawImage(image, {
-                        x: 0,
-                        y: 0,
-                        width: image.width,
-                        height: image.height,
-                    });
+                    const savedBytes = await pdfDoc.save();
+                    pdfDocBytes = savedBytes instanceof Uint8Array ? savedBytes : new Uint8Array(savedBytes);
+                    pdfPdfjsDoc = await pdfjsLib.getDocument({ data: pdfDocBytes.slice(0) }).promise;
+
+                    const numPages = pdfPdfjsDoc.numPages;
+                    pageRotations = new Array(numPages).fill(0);
+                    pageOverlays = Array.from({ length: numPages }, () => []);
+                    activePageIndex = 0;
+                    selectedOverlayId = null;
+
+                    document.getElementById('file-info').innerText = `แปลงจากรูปภาพ (${files.length} ภาพ)`;
+                    document.getElementById('drop-zone').classList.add('hidden');
+                    document.getElementById('pdf-pages-container').classList.remove('hidden');
+
+                    await renderAllPages();
+                    await renderThumbnails();
+                    updatePageCountDisplay();
+
+                    // Download the generated PDF while keeping it open in PDF STUDIO.
+                    const pdfBlob = new Blob([pdfDocBytes], { type: 'application/pdf' });
+                    const downloadUrl = URL.createObjectURL(pdfBlob);
+                    const link = document.createElement('a');
+                    link.href = downloadUrl;
+                    link.download = 'images-to-pdf.pdf';
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    setTimeout(() => URL.revokeObjectURL(downloadUrl), 1500);
+
+                    alert(`แปลงภาพเป็น PDF สำเร็จ ${files.length} ภาพ และเปิดเอกสารใน PDF STUDIO แล้ว`);
+                } catch (error) {
+                    console.error('Image to PDF conversion failed:', error);
+                    alert(`แปลงภาพเป็น PDF ไม่สำเร็จ\n${error && error.message ? error.message : 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ'}\n\nกรุณาลองใช้ไฟล์ JPG หรือ PNG อีกครั้ง`);
+                } finally {
+                    // Allow selecting the same files again after a failed or completed conversion.
+                    input.value = '';
                 }
-
-                pdfDocBytes = await pdfDoc.save();
-                pdfPdfjsDoc = await pdfjsLib.getDocument({ data: pdfDocBytes.slice(0) }).promise;
-
-                const numPages = pdfPdfjsDoc.numPages;
-                pageRotations = new Array(numPages).fill(0);
-                pageOverlays = Array.from({ length: numPages }, () => []);
-
-                document.getElementById('file-info').innerText = `แปลงจากรูปภาพ (${files.length} ภาพ)`;
-                document.getElementById('drop-zone').classList.add('hidden');
-                document.getElementById('pdf-pages-container').classList.remove('hidden');
-
-                await renderAllPages();
-                await renderThumbnails();
-                updatePageCountDisplay();
             };
+
             input.click();
         }
 
